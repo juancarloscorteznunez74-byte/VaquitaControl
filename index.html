@@ -507,6 +507,17 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
   </div>
 </div>
 
+<!-- MODAL TICKET -->
+<div class="mover" id="modalTicket">
+  <div class="modal" style="max-width:380px;padding:0;background:transparent;border:none;box-shadow:none;">
+    <div id="tktModalContent"></div>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn bg" style="flex:1;font-size:.9rem" onclick="imprimirTicket()">🖨️ Imprimir Ticket</button>
+      <button class="btn bo2" style="flex:1;font-size:.9rem" onclick="document.getElementById('modalTicket').classList.remove('show')">✕ Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <!-- NOTIF -->
 <div class="notif" id="notif"><span id="notifMsg">OK</span></div>
 
@@ -850,13 +861,14 @@ function limpTkt(){tktItems=[];selProd=null;renderTkt();renderPGrid();}
 function finVenta(met){
   if(!tktItems.length){sn('El ticket está vacío','yw');return;}
   const tot=tktItems.reduce((a,b)=>a+b.sub,0);
-  // descontar stock
+  const tkId='TK-'+String(histV.length+1).padStart(3,'0');
+  const snap=[...tktItems];
   tktItems.forEach(t=>{const p=prods.find(x=>x.id===t.id);if(p)p.st=Math.max(0,p.st-(t.isPieza?t.val:t.val/1000));});
   ST.vHoy+=tot;ST.vFis+=tot;
   if(met==='efectivo')ST.pEfec+=tot; else ST.pTarj+=tot;
-  histV.push({id:'TK-'+String(histV.length+1).padStart(3,'0'),items:tktItems.map(t=>({nom:t.nom})),total:tot,pago:met,tipo:'física',hora:new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}),emp:CU?.nombre?.split(' ')[0]||'—'});
-  sn('✅ Venta $'+fmt(tot)+' — '+met+' — Ticket generado','gr');
+  histV.push({id:tkId,items:snap.map(t=>({nom:t.nom})),total:tot,pago:met,tipo:'física',hora:new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}),emp:CU?.nombre?.split(' ')[0]||'—'});
   limpTkt();updKPIs();renderInv();
+  mostrarTicketModal(tkId, snap, tot, met, 'Tienda Física 🛒');
 }
 
 // ══════════════════════════════════════
@@ -915,31 +927,50 @@ function renderEc(){
   document.getElementById('ecCount').textContent=ep.length+' productos disponibles';
   if(!g)return;
   g.innerHTML=ep.map(p=>{const pct=Math.min(100,Math.round((p.st/Math.max(p.mn*3,1))*100));return`
-    <div class="ecrd" onclick="addCart(${p.id})">
+    <div class="ecrd">
       <div class="ecimg">${p.em}</div>
       <div class="ecinfo">
         <div class="ecnm">${p.nom}</div>
-        <div class="ecpr">$${p.pr}<span style="font-size:.71rem;color:var(--tx2);font-weight:400">/kg</span></div>
-        <div style="font-size:.71rem;color:var(--tx2);margin-top:3px">${p.st.toFixed(2)} kg disp.</div>
+        <div class="ecpr">$${p.pr}<span style="font-size:.71rem;color:var(--tx2);font-weight:400">/${p.tipo==='pieza'?'pza':'/kg'}</span></div>
+        <div style="font-size:.71rem;color:var(--tx2);margin-top:3px">${p.st.toFixed(p.tipo==='pieza'?0:2)} ${p.tipo==='pieza'?'pzas':'kg'} disponibles</div>
         <div class="ecbar"><div class="ecfill" style="width:${pct}%;background:${pct<20?'var(--ro)':pct<50?'var(--am)':'var(--v)'}"></div></div>
         <div style="font-size:.67rem;color:var(--tx2);margin-top:3px">${slbl(dCad(p.cad))}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;">
+          <input type="number" min="1" value="${p.tipo==='pieza'?1:500}"
+            id="ecqty-${p.id}"
+            style="width:70px;background:var(--bg3);border:1px solid var(--bo);color:var(--tx);padding:4px 7px;border-radius:7px;font-size:.82rem;outline:none;"
+            placeholder="${p.tipo==='pieza'?'pzas':'gramos'}">
+          <button class="btn bg bsm" style="flex:1" onclick="addCart(${p.id})">
+            🛒 ${p.tipo==='pieza'?'Agregar':'Pedir'}
+          </button>
+        </div>
       </div>
     </div>`;}).join('');
 }
 function addCart(id){
-  const p=prods.find(x=>x.id===id);if(!p||p.st<=0){sn('Sin stock','rd');return;}
-  const g=500,sub=(g/1000)*p.pr;
+  const p=prods.find(x=>x.id===id);
+  if(!p||p.st<=0){sn('Sin stock disponible','rd');return;}
+  const inp=document.getElementById('ecqty-'+id);
+  const qty=inp?parseFloat(inp.value)||1:( p.tipo==='pieza'?1:500 );
+  if(qty<=0){sn('Ingresa una cantidad válida','yw');return;}
+  const stockCheck=p.tipo==='pieza'?qty:qty/1000;
+  if(stockCheck>p.st){sn('⚠️ Stock insuficiente ('+p.st.toFixed(p.tipo==='pieza'?0:2)+' '+(p.tipo==='pieza'?'pzas':'kg')+' disponibles)','rd');return;}
+  const sub=p.tipo==='pieza'?qty*p.pr:(qty/1000)*p.pr;
+  const desc=p.tipo==='pieza'?qty+' pza':qty+'g';
   const ex=cart.find(c=>c.id===id);
-  if(ex){ex.g+=g;ex.sub+=sub;}else cart.push({id,nom:p.nom,em:p.em,g,pr:p.pr,sub});
-  renderCart();sn(p.em+' '+p.nom+' (500g) añadido','gr');
+  if(ex){ex.g+=qty;ex.sub+=sub;ex.desc=p.tipo==='pieza'?ex.g+' pza':ex.g+'g';}
+  else cart.push({id,nom:p.nom,em:p.em,g:qty,pr:p.pr,sub,desc,tipo:p.tipo});
+  if(inp) inp.value=p.tipo==='pieza'?1:500;
+  renderCart();
+  sn(p.em+' '+p.nom+' ('+desc+') añadido al carrito ✓','gr');
 }
 function renderCart(){
   const c=document.getElementById('cartI');
   if(!cart.length){c.innerHTML='<p style="color:var(--tx2);font-size:.82rem;text-align:center;padding:14px 0">Vacío</p>';document.getElementById('cartTot').textContent='$0.00';return;}
   c.innerHTML=cart.map((t,i)=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--bo);font-size:.82rem">
-      <div><div style="font-weight:600">${t.em} ${t.nom}</div><div style="font-size:.7rem;color:var(--tx2)">${t.g}g</div></div>
-      <div style="display:flex;align-items:center;gap:7px"><strong>$${fmt(t.sub)}</strong><span style="cursor:pointer;color:var(--ro)" onclick="remCart(${i})">✕</span></div>
+      <div><div style="font-weight:600">${t.em} ${t.nom}</div><div style="font-size:.7rem;color:var(--tx2)">${t.desc||t.g+'g'}</div></div>
+      <div style="display:flex;align-items:center;gap:7px"><strong style="color:var(--v)">$${fmt(t.sub)}</strong><span style="cursor:pointer;color:var(--ro);font-size:1rem" onclick="remCart(${i})">✕</span></div>
     </div>`).join('');
   document.getElementById('cartTot').textContent='$'+fmt(cart.reduce((a,b)=>a+b.sub,0));
 }
@@ -948,11 +979,13 @@ function confirmPed(){
   if(!cart.length){sn('Carrito vacío','yw');return;}
   const tot=cart.reduce((a,b)=>a+b.sub,0);
   const pid='PED-'+String(pedidos.length+1).padStart(3,'0');
+  const cartSnap=cart.map(c=>({nom:c.nom,em:c.em,val:c.g,isPieza:c.tipo==='pieza',pr:c.pr,sub:c.sub,desc:c.desc||c.g+'g'}));
   cart.forEach(c=>{const p=prods.find(x=>x.id===c.id);if(p)p.st=Math.max(0,p.st-c.g/1000);});
   ST.vHoy+=tot;ST.vEc+=tot;ST.pTrans+=tot;ST.pedOL++;ST.pedPend++;
-  histV.push({id:pid,items:cart.map(c=>({nom:c.nom})),total:tot,pago:'transferencia',tipo:'ecommerce',hora:new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}),emp:'E-commerce'});
+  histV.push({id:pid,items:cartSnap.map(c=>({nom:c.nom})),total:tot,pago:'transferencia',tipo:'ecommerce',hora:new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}),emp:'E-commerce'});
   pedidos.unshift({id:pid,total:tot,estatus:'pendiente',fecha:new Date().toLocaleTimeString('es-MX')});
   cart=[];renderCart();renderPeds();updKPIs();renderInv();renderEc();
+  mostrarTicketModal(pid, cartSnap, tot, 'transferencia/online', 'E-commerce 🌐');
   sn('📦 Pedido '+pid+' confirmado — $'+fmt(tot),'gr');
 }
 function renderPeds(){
@@ -1084,6 +1117,65 @@ function genRep(){
   <p style="text-align:center;font-size:10px;color:#888">VaquitaControl Cloud v2.0 · Universidad Sierra Madre · Fresnillo, Zac.</p>
   <script>window.print();<\/script></body></html>`);
   w.document.close();sn('Reporte generado ✓','gr');
+}
+
+// ══════════════════════════════════════
+// TICKET MODAL
+// ══════════════════════════════════════
+function mostrarTicketModal(id, items, total, pago, tipo){
+  const now = new Date();
+  const fecha = now.toLocaleDateString('es-MX',{dateStyle:'long'});
+  const hora  = now.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+  const emp   = CU?.nombre||'—';
+  let rows = items.map(t=>`
+    <tr>
+      <td style="padding:5px 8px;border-bottom:1px solid #eee">${t.em||'📦'} ${t.nom}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #eee;text-align:center">${t.desc||t.val}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #eee;text-align:right;font-weight:600">$${fmt(t.sub)}</td>
+    </tr>`).join('');
+  const html=`
+    <div style="font-family:monospace;max-width:340px;margin:0 auto;padding:20px;background:#fff;border-radius:12px;box-shadow:0 4px 30px rgba(0,0,0,.15)">
+      <div style="text-align:center;margin-bottom:14px">
+        <div style="font-size:2rem">🐄</div>
+        <div style="font-size:1.1rem;font-weight:800;color:#007a47">Cremería "La Vaquita"</div>
+        <div style="font-size:.75rem;color:#888">Fresnillo, Zacatecas</div>
+        <div style="font-size:.75rem;color:#888">Tel: 492-555-0000</div>
+        <div style="border-top:2px dashed #ccc;margin:10px 0"></div>
+        <div style="font-size:.78rem;color:#555">${fecha} — ${hora}</div>
+        <div style="font-size:.78rem;color:#555">Ticket: <strong>${id}</strong></div>
+        <div style="font-size:.78rem;color:#555">Atendió: ${emp}</div>
+        <div style="font-size:.78rem;color:#555">Canal: ${tipo}</div>
+      </div>
+      <div style="border-top:2px dashed #ccc;margin-bottom:10px"></div>
+      <table style="width:100%;border-collapse:collapse;font-size:.82rem">
+        <thead><tr>
+          <th style="text-align:left;padding:4px 8px;background:#f5f5f5">Producto</th>
+          <th style="text-align:center;padding:4px 8px;background:#f5f5f5">Cant.</th>
+          <th style="text-align:right;padding:4px 8px;background:#f5f5f5">Subtotal</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="border-top:2px dashed #ccc;margin:10px 0"></div>
+      <div style="display:flex;justify-content:space-between;font-size:1.1rem;font-weight:800;color:#007a47">
+        <span>TOTAL</span><span>$${fmt(total)}</span>
+      </div>
+      <div style="text-align:center;margin-top:6px;font-size:.78rem;color:#888">
+        Método de pago: <strong>${pago}</strong>
+      </div>
+      <div style="border-top:2px dashed #ccc;margin:10px 0"></div>
+      <div style="text-align:center;font-size:.72rem;color:#aaa">
+        ¡Gracias por su compra!<br>VaquitaControl Cloud v2.0
+      </div>
+    </div>`;
+  document.getElementById('tktModalContent').innerHTML=html;
+  document.getElementById('modalTicket').classList.add('show');
+}
+function imprimirTicket(){
+  const cont=document.getElementById('tktModalContent').innerHTML;
+  const w=window.open('','_blank','width=400,height=600');
+  w.document.write('<html><head><title>Ticket La Vaquita</title><style>body{margin:0;padding:10px;background:#fff}@media print{button{display:none}}</style></head><body>'+cont+'<br><button onclick="window.print()" style="width:100%;padding:10px;background:#007a47;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;margin-top:10px">🖨️ Imprimir</button></body></html>');
+  w.document.close();
+  setTimeout(()=>w.print(),500);
 }
 
 // ══════════════════════════════════════
